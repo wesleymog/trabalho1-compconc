@@ -5,7 +5,10 @@
 
 //numero de threads
 int nthreads;
+//Variável do pthread_mutex
+pthread_mutex_t mutex;
 
+double somatorioConcorrente = 0;
 //argumentos para serem utilizados no metodo concorrente
 typedef struct {
     double limiteSuperior;
@@ -13,9 +16,9 @@ typedef struct {
     long long int inicioSomatorio;
     long long int fimSomatorio;
     double width;
-}ArgumentoRectangleMethodConcorrente;
-
-double rectangleMethodSequencial(double limiteSuperior, double limiteInferior, long long int quantidadeRetangulo){
+}StructConcorrent;
+//Integração com retângulos sequencial
+double IntRetSequencial(double limiteSuperior, double limiteInferior, long long int quantidadeRetangulo){
     double width = (limiteSuperior - limiteInferior)/quantidadeRetangulo;
     double somatorio, x_i = 0;
     for (long long int i = 1; i <= quantidadeRetangulo ; i++) {
@@ -25,26 +28,27 @@ double rectangleMethodSequencial(double limiteSuperior, double limiteInferior, l
     return somatorio;
 }
 
-void definirQuantidadeRetangulosParaCadaThread(ArgumentoRectangleMethodConcorrente *argumentoRectangleMethodConcorrente, long long int quantidadeRetangulo, double limiteInferior, double limiteSuperior){
+void definirQuantidadeRetangulosParaCadaThread(StructConcorrent *structConcorrent, long long int quantidadeRetangulo, double limiteInferior, double limiteSuperior){
     double width = (limiteSuperior - limiteInferior)/quantidadeRetangulo;
     long long int quantidadeRetanguloDivido = quantidadeRetangulo/nthreads;
     long long int restoDivisao = quantidadeRetangulo%nthreads;
     long long int quantidadeRetanguloComRestoDestribuido = 1; //somatorio começa em 1
     for (int i = 0; i < nthreads; i++) {
         long long int len = quantidadeRetanguloDivido;
-        argumentoRectangleMethodConcorrente[i].inicioSomatorio = quantidadeRetanguloComRestoDestribuido;
+        structConcorrent[i].inicioSomatorio = quantidadeRetanguloComRestoDestribuido;
         if (restoDivisao > 0){
             len++;
             restoDivisao--;
         }
         quantidadeRetanguloComRestoDestribuido += len;
-        argumentoRectangleMethodConcorrente[i].fimSomatorio = argumentoRectangleMethodConcorrente[i].inicioSomatorio + len;
-        argumentoRectangleMethodConcorrente[i].limiteSuperior = limiteSuperior;
-        argumentoRectangleMethodConcorrente[i].limiteInferior = limiteInferior;
-        argumentoRectangleMethodConcorrente[i].width = width;
+        structConcorrent[i].fimSomatorio = structConcorrent[i].inicioSomatorio + len;
+        structConcorrent[i].limiteSuperior = limiteSuperior;
+        structConcorrent[i].limiteInferior = limiteInferior;
+        structConcorrent[i].width = width;
     }
 }
 
+//Integração com retângulos concorrente
 void * rectangleMethodConcorrente(void * arg){
     double x_i = 0.0;
     double *somatorioConcorrenteLocal;
@@ -55,20 +59,21 @@ void * rectangleMethodConcorrente(void * arg){
         exit(1);
     }
     *somatorioConcorrenteLocal = 0;
-    ArgumentoRectangleMethodConcorrente *argumentoRectangleMethodConcorrente = (ArgumentoRectangleMethodConcorrente *) arg;
-    for (int i = argumentoRectangleMethodConcorrente->inicioSomatorio; i < argumentoRectangleMethodConcorrente->fimSomatorio; i++) {
-        x_i = argumentoRectangleMethodConcorrente->limiteInferior + (i-1)*argumentoRectangleMethodConcorrente->width;
-        somaLocal = somaLocal + (argumentoRectangleMethodConcorrente->width * (x_i * x_i * x_i));
+    StructConcorrent *structConcorrent = (StructConcorrent *) arg;
+    for (int i = structConcorrent->inicioSomatorio; i < structConcorrent->fimSomatorio; i++) {
+        x_i = structConcorrent->limiteInferior + (i-1)*structConcorrent->width;
+        somaLocal = somaLocal + (structConcorrent->width * (x_i * x_i * x_i));
     }
-    *somatorioConcorrenteLocal = somaLocal;
-    pthread_exit((void *) somatorioConcorrenteLocal);
+    pthread_mutex_lock(&mutex);
+    somatorioConcorrente+=somaLocal;
+    pthread_mutex_unlock(&mutex);
+
+    pthread_exit(NULL);
 }
 
 int main(int argc, char* argv[] ){
 
-    double retornoSomatorioConcorrente;
     double retornoSomatorioSequencial;
-    double *retornoThread;
 
     //parametros da integral
     double limiteInferior;
@@ -94,41 +99,43 @@ int main(int argc, char* argv[] ){
 
     //resultado do valor sequencial do rectangleMethod
     GET_TIME(inicio);
-    retornoSomatorioSequencial = rectangleMethodSequencial(limiteSuperior,limiteInferior,quantidadeRetangulo);
+    retornoSomatorioSequencial = IntRetSequencial(limiteSuperior,limiteInferior,quantidadeRetangulo);
     GET_TIME(fim);
     printf("O metodo sequencial demorou %.7lf e obteve o valor aproximado igual a %.15lf  \n", (fim - inicio),retornoSomatorioSequencial);
 
     //rectangleMethod concorrente
     GET_TIME(inicio);
+    //--inicilaiza o mutex (lock de exclusao mutua)
+    pthread_mutex_init(&mutex, NULL);
     tid = (pthread_t *) malloc(sizeof (pthread_t) * nthreads);
     if (tid == NULL){
         fprintf(stderr, "ERRO --malloc\n");
         return 2;
     }
-    ArgumentoRectangleMethodConcorrente *argumentoRectangleMethodConcorrente = (ArgumentoRectangleMethodConcorrente *) malloc(sizeof(ArgumentoRectangleMethodConcorrente) * nthreads);
-    if (argumentoRectangleMethodConcorrente == NULL){
+    StructConcorrent *structConcorrent = (StructConcorrent *) malloc(sizeof(StructConcorrent) * nthreads);
+    if (structConcorrent == NULL){
         printf("ERRO--Malloc \n");
         return 2;
     }
-    definirQuantidadeRetangulosParaCadaThread(argumentoRectangleMethodConcorrente, quantidadeRetangulo, limiteInferior, limiteSuperior);
+    definirQuantidadeRetangulosParaCadaThread(structConcorrent, quantidadeRetangulo, limiteInferior, limiteSuperior);
     //criar as threads
     for (long int i = 0; i < nthreads; i++) {
-        if (pthread_create(tid + i, NULL, rectangleMethodConcorrente, (void *) &argumentoRectangleMethodConcorrente[i] )){
+        if (pthread_create(tid + i, NULL, rectangleMethodConcorrente, (void *) &structConcorrent[i] )){
             fprintf(stderr, "ERRO --pthread_Create\n");
             return 3;
         }
     }
     for (int i = 0; i < nthreads; i++) {
-        if (pthread_join(*(tid + i), (void**) &retornoThread)){
+        if (pthread_join(*(tid + i), NULL)){
             fprintf(stderr, "ERRO --pthread_Join\n");
             return 4;
         }
-        retornoSomatorioConcorrente += *retornoThread;
-        free(retornoThread);
     }
+
     GET_TIME(fim)
-    printf("o metodo concorrente demorou %.7lf e obteve o valor aproximado igual a %.15lf \n", (fim - inicio), retornoSomatorioConcorrente);
+    printf("o metodo concorrente demorou %.7lf e obteve o valor aproximado igual a %.15lf \n", (fim - inicio), somatorioConcorrente);
     free(tid);
-    free(argumentoRectangleMethodConcorrente);
+    free(structConcorrent);
+    pthread_mutex_destroy(&mutex);
     return 0;
 }
